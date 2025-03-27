@@ -1,23 +1,22 @@
-import React, { Suspense, useEffect, useRef, useState, useMemo } from 'react'
-import { Canvas, useFrame } from '@react-three/fiber'
+import React, { Suspense, useEffect, useRef, useState, useMemo } from 'react';
+import { Canvas, useFrame, extend } from '@react-three/fiber';
 import { useGLTF, useTexture, Loader, Environment, useFBX, useAnimations, OrthographicCamera } from '@react-three/drei';
 import { MeshStandardMaterial } from 'three/src/materials/MeshStandardMaterial';
-
-import { LinearEncoding, sRGBEncoding } from 'three/src/constants';
+import { LinearSRGBColorSpace, SRGBColorSpace } from 'three/src/constants';
 import { LineBasicMaterial, MeshPhysicalMaterial, Vector2 } from 'three';
+import { PlaneGeometry } from 'three';
 import ReactAudioPlayer from 'react-audio-player';
-
 import createAnimation from './converter';
 import blinkData from './blendDataBlink.json';
-
 import * as THREE from 'three';
 import axios from 'axios';
 const _ = require('lodash');
 
-const host = 'http://localhost:5000'
+const host = 'http://localhost:5000';
+
+extend({ PlaneGeometry });
 
 function Avatar({ avatar_url, speak, setSpeak, text, setAudioSource, playing }) {
-
   let gltf = useGLTF(avatar_url);
   let morphTargetDictionaryBody = null;
   let morphTargetDictionaryLowerTeeth = null;
@@ -71,14 +70,16 @@ function Avatar({ avatar_url, speak, setSpeak, text, setAudioSource, playing }) 
     hairNormalTexture,
     hairRoughnessTexture
   ], t => {
-    t.encoding = sRGBEncoding;
+    t.encoding = SRGBColorSpace;
     t.flipY = false;
   });
 
-  bodyNormalTexture.encoding = LinearEncoding;
-  tshirtNormalTexture.encoding = LinearEncoding;
-  teethNormalTexture.encoding = LinearEncoding;
-  hairNormalTexture.encoding = LinearEncoding;
+  bodyNormalTexture.encoding = LinearSRGBColorSpace;
+  tshirtNormalTexture.encoding = LinearSRGBColorSpace;
+  teethNormalTexture.encoding = LinearSRGBColorSpace;
+  hairNormalTexture.encoding = LinearSRGBColorSpace;
+
+  // ...existing code...
 
   
   gltf.scene.traverse(node => {
@@ -184,41 +185,34 @@ function Avatar({ avatar_url, speak, setSpeak, text, setAudioSource, playing }) 
   });
 
   const [clips, setClips] = useState([]);
-  const mixer = useMemo(() => new THREE.AnimationMixer(gltf.scene), []);
+  const mixer = useMemo(() => new THREE.AnimationMixer(gltf.scene), [gltf.scene]);
 
   useEffect(() => {
-
-    if (speak === false)
-      return;
-
+    if (speak === false) return;
+  
     makeSpeech(text)
-    .then( response => {
-
-      let {blendData, filename}= response.data;
-
-      let newClips = [ 
-        createAnimation(blendData, morphTargetDictionaryBody, 'HG_Body'), 
-        createAnimation(blendData, morphTargetDictionaryLowerTeeth, 'HG_TeethLower') ];
-
-      filename = host + filename;
-        
-      setClips(newClips);
-      setAudioSource(filename);
-
-    })
-    .catch(err => {
-      console.error(err);
-      setSpeak(false);
-
-    })
-
-  }, [speak]);
-
+      .then((response) => {
+        const { blendData, audioUrl } = response.data;
+        console.log('Response from /talk:', response.data);
+  
+        const newClips = [
+          createAnimation(blendData, morphTargetDictionaryBody, 'HG_Body'),
+          createAnimation(blendData, morphTargetDictionaryLowerTeeth, 'HG_TeethLower'),
+        ];
+  
+        setClips(newClips);
+        setAudioSource(audioUrl); // Use audioUrl directly
+      })
+      .catch((err) => {
+        console.error(err);
+        setSpeak(false);
+      });
+  }, [speak, text, morphTargetDictionaryBody, morphTargetDictionaryLowerTeeth, setAudioSource, setSpeak]);
   let idleFbx = useFBX('/idle.fbx');
   let { clips: idleClips } = useAnimations(idleFbx.animations);
 
   idleClips[0].tracks = _.filter(idleClips[0].tracks, track => {
-    return track.name.includes("Head") || track.name.includes("Neck") || track.name.includes("Spine2");
+    return track.name.includes("Head") || track.name.includes("Neck") || track.name.includes("Spine001");
   });
 
   idleClips[0].tracks = _.map(idleClips[0].tracks, track => {
@@ -232,7 +226,7 @@ function Avatar({ avatar_url, speak, setSpeak, text, setAudioSource, playing }) 
     }
 
     if (track.name.includes("Spine")) {
-      track.name = "spine2.quaternion";
+      track.name = "spine001.quaternion";
     }
 
     return track;
@@ -249,7 +243,7 @@ function Avatar({ avatar_url, speak, setSpeak, text, setAudioSource, playing }) 
     blinkAction.play();
 
 
-  }, []);
+  }, [idleClips, mixer, morphTargetDictionaryBody]);
 
   // Play animation clips when available
   useEffect(() => {
@@ -264,7 +258,7 @@ function Avatar({ avatar_url, speak, setSpeak, text, setAudioSource, playing }) 
 
     });
 
-  }, [playing]);
+  }, [playing, clips, mixer]);
 
   
   useFrame((state, delta) => {
@@ -279,48 +273,50 @@ function Avatar({ avatar_url, speak, setSpeak, text, setAudioSource, playing }) 
   );
 }
 
-
 function makeSpeech(text) {
-  return axios.post(host + '/talk', { text });
+  return axios.post(host + '/talk', { text }).then((response) => {
+    console.log('Response from /talk:', response.data);
+    return response;
+  });
 }
 
 const STYLES = {
-  area: {position: 'absolute', bottom:'10px', left: '10px', zIndex: 500},
-  text: {margin: '0px', width:'300px', padding: '5px', background: 'none', color: '#ffffff', fontSize: '1.2em', border: 'none'},
-  speak: {padding: '10px', marginTop: '5px', display: 'block', color: '#FFFFFF', background: '#222222', border: 'None'},
-  area2: {position: 'absolute', top:'5px', right: '15px', zIndex: 500},
-  label: {color: '#777777', fontSize:'0.8em'}
-}
+  area: { position: 'absolute', bottom: '10px', left: '10px', zIndex: 500 },
+  text: { margin: '0px', width: '300px', padding: '5px', background: 'none', color: '#ffffff', fontSize: '1.2em', border: 'none' },
+  speak: { padding: '10px', marginTop: '5px', display: 'block', color: '#FFFFFF', background: '#222222', border: 'None' },
+  area2: { position: 'absolute', top: '5px', right: '15px', zIndex: 500 },
+  label: { color: '#777777', fontSize: '0.8em' }
+};
 
 function App() {
-
   const audioPlayer = useRef();
-
   const [speak, setSpeak] = useState(false);
   const [text, setText] = useState("My name is Arwen. I'm a virtual human who can speak whatever you type here along with realistic facial movements.");
   const [audioSource, setAudioSource] = useState(null);
   const [playing, setPlaying] = useState(false);
 
-  // End of play
+  // Move the useEffect here
+  useEffect(() => {
+    console.log('Audio Source Updated:', audioSource);
+  }, [audioSource]);
+
   function playerEnded(e) {
     setAudioSource(null);
     setSpeak(false);
     setPlaying(false);
   }
 
-  // Player is read
   function playerReady(e) {
+    console.log('Audio Source:', audioSource);
     audioPlayer.current.audioEl.current.play();
     setPlaying(true);
-
-  }  
+  }
 
   return (
     <div className="full">
       <div style={STYLES.area}>
         <textarea rows={4} type="text" style={STYLES.text} value={text} onChange={(e) => setText(e.target.value.substring(0, 200))} />
-        <button onClick={() => setSpeak(true)} style={STYLES.speak}> { speak? 'Running...': 'Speak' }</button>
-
+        <button onClick={() => setSpeak(true)} style={STYLES.speak}> {speak ? 'Running...' : 'Speak'}</button>
       </div>
 
       <ReactAudioPlayer
@@ -328,68 +324,50 @@ function App() {
         ref={audioPlayer}
         onEnded={playerEnded}
         onCanPlayThrough={playerReady}
-        
       />
-      
-      {/* <Stats /> */}
-    <Canvas dpr={2} onCreated={(ctx) => {
+
+      <Canvas dpr={2} onCreated={(ctx) => {
         ctx.gl.physicallyCorrectLights = true;
       }}>
+        <OrthographicCamera
+          makeDefault
+          zoom={2000}
+          position={[0, 1.65, 1]}
+        />
 
-      <OrthographicCamera 
-      makeDefault
-      zoom={2000}
-      position={[0, 1.65, 1]}
-      />
+        <Suspense fallback={null}>
+          <Environment background={false} files="/images/photo_studio_loft_hall_1k.hdr" />
+        </Suspense>
 
-      {/* <OrbitControls
-        target={[0, 1.65, 0]}
-      /> */}
+        <Suspense fallback={null}>
+          <Bg />
+        </Suspense>
 
-      <Suspense fallback={null}>
-        <Environment background={false} files="/images/photo_studio_loft_hall_1k.hdr" />
-      </Suspense>
-
-      <Suspense fallback={null}>
-        <Bg />
-      </Suspense>
-
-      <Suspense fallback={null}>
-
-
-
-          <Avatar 
-            avatar_url="/model.glb" 
-            speak={speak} 
+        <Suspense fallback={null}>
+          <Avatar
+            avatar_url="/model.glb"
+            speak={speak}
             setSpeak={setSpeak}
             text={text}
             setAudioSource={setAudioSource}
             playing={playing}
-            />
-
-      
-      </Suspense>
-
-  
-
-  </Canvas>
-  <Loader dataInterpolation={(p) => `Loading... please wait`}  />
-  </div>
-  )
+          />
+        </Suspense>
+      </Canvas>
+      <Loader dataInterpolation={(p) => `Loading... please wait`} />
+    </div>
+  );
 }
 
 function Bg() {
-  
   const texture = useTexture('/images/bg.webp');
 
-  return(
+  return (
     <mesh position={[0, 1.5, -2]} scale={[0.8, 0.8, 0.8]}>
-      <planeBufferGeometry />
+      <planeGeometry />
       <meshBasicMaterial map={texture} />
-
     </mesh>
-  )
-
+  );
 }
 
 export default App;
